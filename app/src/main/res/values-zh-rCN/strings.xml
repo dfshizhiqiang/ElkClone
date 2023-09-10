@@ -1,0 +1,11 @@
+<resources>
+    <string name="current_rate">当前汇率 %1$s (1 %2$s ≈ %3$s %4$s)</string>
+    <string name="recent_updated">最近更新过了，无需手动更新🤫</string>
+    <string name="update_rate_success">汇率更新成功😃</string>
+    <string name="update_rate_failed">汇率更新失败️😷: %1$s</string>
+    <string name="cancel">取消</string>
+    <string name="hot">🔥热门</string>
+    <string name="last_update_time">最近更新时间：</string>
+    <string name="exchange">交换</string>
+    <string name="select_other_currency">选择其他货币</string>
+</resources>
