@@ -2,8 +2,6 @@ package com.imzhiqiang.elkclone.ui.screen
 
 import android.icu.text.NumberFormat
 import android.icu.util.Currency
-import android.view.HapticFeedbackConstants
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -17,8 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
@@ -37,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -46,18 +43,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.boundsInParent
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -70,18 +64,28 @@ import com.imzhiqiang.elkclone.toast
 import com.imzhiqiang.elkclone.ui.dialog.EditDialog
 import com.imzhiqiang.elkclone.ui.dialog.SettingDialog
 import com.imzhiqiang.elkclone.ui.theme.ElkCloneTheme
+import java.lang.Integer.max
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     navController: NavController = rememberNavController(),
     viewModel: MainViewModel = viewModel()
 ) {
     val locale = LocalConfiguration.current.locales[0]
+    val numberFormat = NumberFormat.getInstance()
     val currencyRate by viewModel.currencyRate.collectAsStateWithLifecycle()
-    val sourceCurrency = Currency.getInstance(currencyRate.source).getDisplayName(locale)
-    val targetCurrency = Currency.getInstance(currencyRate.target).getDisplayName(locale)
+    val sourceCurrency by remember {
+        derivedStateOf {
+            Currency.getInstance(currencyRate.source).getDisplayName(locale)
+        }
+    }
+    val targetCurrency by remember {
+        derivedStateOf {
+            Currency.getInstance(currencyRate.target).getDisplayName(locale)
+        }
+    }
 
     var showEditDialog by remember { mutableStateOf(false) }
     var showSettingDialog by remember { mutableStateOf(false) }
@@ -137,27 +141,46 @@ fun HomeScreen(
         }) {
         val topPadding = it.calculateTopPadding()
 
-        val density = LocalDensity.current.density
-        val view = LocalView.current
+        val hapticFeedback = LocalHapticFeedback.current
 
-        var itemHeight by remember { mutableStateOf(56.dp) }
         var drag by remember { mutableFloatStateOf(0f) }
         var multiple by rememberSaveable { mutableIntStateOf(1) }
         var isExpanded by remember { mutableStateOf(false) }
 
         val amountValues by remember {
-            derivedStateOf {
-                (1..10).map { i -> AmountValue(i.toDouble(), multiple) }.toMutableStateList()
-            }
+            derivedStateOf { AmountValue.get(multiple).toMutableStateList() }
         }
 
-        LazyColumn(
+        Layout(
+            content = {
+                amountValues.forEach { amountItem ->
+                    CurrencyAmountItem(
+                        amountValue = amountItem,
+                        rate = currencyRate.rate,
+                        offset = drag,
+                        numberFormat = numberFormat,
+                        onItemClick = { current ->
+                            val index = amountValues.indexOf(current)
+                            val next = amountValues.getOrNull(index + 1)
+                                ?: current.copy(amount = current.amount * 2)
+                            isExpanded = !isExpanded
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (isExpanded) {
+                                amountValues.clear()
+                                amountValues.add(current)
+                                amountValues.addAll(current.getMiddleValues(next))
+                                amountValues.add(next)
+                            } else {
+                                amountValues.clear()
+                                amountValues.addAll(AmountValue.get(multiple))
+                            }
+                        }
+                    )
+                }
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = topPadding)
-                .onGloballyPositioned { l ->
-                    itemHeight = (l.boundsInParent().height / density / 10).dp.coerceAtLeast(56.dp)
-                }
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(onDragStart = {
                         if (!isExpanded) {
@@ -165,15 +188,20 @@ fun HomeScreen(
                         }
                     }, onDragEnd = {
                         if (!isExpanded) {
+                            var hapticFeedbackAgain = false
                             if (drag > 50) {
                                 multiple = (multiple / 10).coerceAtLeast(1)
+                                hapticFeedbackAgain = multiple == 1
                             } else if (drag < -50) {
                                 multiple = (multiple * 10).coerceAtMost(100_000)
+                                hapticFeedbackAgain = multiple == 100_000
                             }
-                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (hapticFeedbackAgain) {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            }
                             drag = 0f
                         }
-
                     }, onHorizontalDrag = { change, dragAmount ->
                         if (!isExpanded) {
                             change.consume()
@@ -181,27 +209,26 @@ fun HomeScreen(
                         }
                     })
                 }
-        ) {
-            items(amountValues, key = { item -> item.amount }) { amountItem ->
-                CurrencyAmountItem(
-                    amountValue = amountItem,
-                    rate = currencyRate.rate,
-                    offset = drag,
-                    itemHeight = itemHeight,
-                    modifier = Modifier.animateItemPlacement(),
-                    onItemClick = { current ->
-                        val index = amountValues.indexOf(current)
-                        val next = amountValues.getOrNull(index + 1)
-                        if (next != null) {
-                            isExpanded = !isExpanded
-                            if (isExpanded) {
-                                amountValues.addAll(index + 1, current.getMiddleValues(next))
-                            } else {
-                                amountValues.removeAll { item -> item.isMiddleValue }
-                            }
-                        }
-                    }
-                )
+        ) { measurables, constraints ->
+            val dividedHeight = constraints.maxHeight / measurables.size
+            val height = max(56.dp.roundToPx(), dividedHeight)
+            val itemConstraints = constraints.copy(minHeight = height, maxHeight = height)
+            val placeables = measurables.map { measurable ->
+                // Measure each children
+                measurable.measure(itemConstraints)
+            }
+            layout(constraints.maxWidth, constraints.maxHeight) {
+                // Track the y co-ord we have placed children up to
+                var yPosition = 0
+
+                // Place children in the parent layout
+                placeables.forEach { placeable ->
+                    // Position item on the screen
+                    placeable.place(x = 0, y = yPosition)
+
+                    // Record the y co-ord placed up to
+                    yPosition += placeable.height
+                }
             }
         }
     }
@@ -247,6 +274,12 @@ data class AmountValue(
     val isMiddleValue: Boolean = false
 ) {
 
+    companion object {
+        fun get(multiple: Int): List<AmountValue> {
+            return (1..10).map { i -> AmountValue(i.toDouble(), multiple) }
+        }
+    }
+
     fun getValue() = amount * multiple
 
     fun getMiddleValues(next: AmountValue): List<AmountValue> {
@@ -260,22 +293,27 @@ fun CurrencyAmountItem(
     amountValue: AmountValue,
     rate: Double,
     offset: Float,
-    itemHeight: Dp,
+    numberFormat: NumberFormat,
     modifier: Modifier = Modifier,
     onItemClick: (amountValue: AmountValue) -> Unit
 ) {
-    val numberFormat = NumberFormat.getInstance()
     val leftColor = MaterialTheme.colorScheme.secondaryContainer
     val rightColor = MaterialTheme.colorScheme.tertiaryContainer
-    Column(modifier = modifier) {
+
+    Box(
+        modifier = modifier.fillMaxWidth()
+    ) {
         Row(modifier = Modifier
-            .height(itemHeight)
             .clickable { onItemClick(amountValue) }) {
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .background(if (amountValue.isMiddleValue) leftColor else leftColor.copy(alpha = 0.7f))
+                    .background(
+                        if (amountValue.isMiddleValue) leftColor else leftColor.copy(
+                            alpha = 0.7f
+                        )
+                    )
                     .padding(end = 24.dp),
                 contentAlignment = Alignment.CenterEnd
             ) {
@@ -297,7 +335,11 @@ fun CurrencyAmountItem(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .background(if (amountValue.isMiddleValue) rightColor else rightColor.copy(alpha = 0.7f))
+                    .background(
+                        if (amountValue.isMiddleValue) rightColor else rightColor.copy(
+                            alpha = 0.7f
+                        )
+                    )
                     .padding(start = 24.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
